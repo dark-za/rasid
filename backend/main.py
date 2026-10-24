@@ -7,9 +7,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import attendance_core
 import config
 import models
 import schemas
+import timeutils
 from database import get_attendance_db, get_db, init_db
 
 app = FastAPI(title="Rasid Attendance System", version="2.0.0")
@@ -45,7 +47,7 @@ def read_root():
     return {
         "status": "online",
         "system": "راصد - نظام متابعة الحضور والانصراف",
-        "time": datetime.now(),
+        "time": timeutils.app_now(),
     }
 
 
@@ -71,11 +73,7 @@ def get_today_attendance(
     att_db: Session = Depends(get_attendance_db),
 ):
     cfg = config.settings()
-    now = datetime.now()
-    day_start = datetime(now.year, now.month, now.day)
-    day_end = day_start + timedelta(days=1) - timedelta(seconds=1)
-    start_ms = int(day_start.timestamp() * 1000)
-    end_ms = int(day_end.timestamp() * 1000)
+    start_ms, end_ms = timeutils.day_bounds_epoch_ms(timeutils.app_now().date())
 
     try:
         rows = att_db.execute(
@@ -83,7 +81,7 @@ def get_today_attendance(
                 """
                 SELECT PersonID, PersonName, AttendanceDateTime, AttendanceState, DeviceName
                 FROM AttendanceRecordInfo
-                WHERE AttendanceDateTime BETWEEN :start_ms AND :end_ms
+                WHERE AttendanceDateTime >= :start_ms AND AttendanceDateTime < :end_ms
                 ORDER BY AttendanceDateTime ASC
                 """
             ),
@@ -92,65 +90,20 @@ def get_today_attendance(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail="تعذر قراءة سجلات الحضور") from exc
 
-    # معالجة التبصيم المتكرر (Debounce افتراضي 5 دقائق لكل موظف)
-    debounce = timedelta(minutes=cfg["debounce_minutes"])
-    filtered_logs = []
-    last_punch: dict[str, datetime] = {}
-
-    for person_id, person_name, ts_ms, state, device in rows:
-        if ts_ms is None:
-            continue
-        try:
-            p_time = datetime.fromtimestamp(int(ts_ms) / 1000)
-        except (TypeError, ValueError, OSError):
-            continue
-
-        emp_id = str(person_id or "Unknown")
-        previous = last_punch.get(emp_id)
-        if previous is not None and (p_time - previous) < debounce:
-            continue
-
-        last_punch[emp_id] = p_time
-        filtered_logs.append(
-            {
-                "employee_id": emp_id,
-                "employee_name": person_name,
-                "check_time": p_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "device": device,
-                "state": state,
-            }
-        )
-
-    # حساب المتأخرين مقابل بداية الشيفت + فترة السماح
+    # فلترة التبصيم المتكرر وحساب المتأخرين (منطق نقية في attendance_core)
     shift_start_str, grace_minutes = _first_shift(app_db)
-    shift_start = _parse_shift_start(shift_start_str)
-    grace = timedelta(minutes=grace_minutes)
-
-    first_punches: dict[str, dict] = {}
-    for log in filtered_logs:
-        emp = log["employee_id"]
-        if emp not in first_punches:
-            first_punches[emp] = log
-
-    late_employees = []
-    for emp, log in first_punches.items():
-        t = datetime.strptime(log["check_time"], "%Y-%m-%d %H:%M:%S")
-        limit_time = datetime.combine(t.date(), shift_start) + grace
-        if t > limit_time:
-            late_employees.append(
-                {
-                    "employee_id": emp,
-                    "employee_name": log.get("employee_name"),
-                    "arrival_time": log["check_time"],
-                    "late_minutes": int((t - limit_time).total_seconds() // 60),
-                }
-            )
+    result = attendance_core.process_attendance_rows(
+        rows,
+        shift_start=_parse_shift_start(shift_start_str),
+        grace_minutes=grace_minutes,
+        debounce_minutes=cfg["debounce_minutes"],
+    )
 
     return {
-        "date": day_start.strftime("%Y-%m-%d"),
-        "total_records_processed": len(filtered_logs),
-        "logs": filtered_logs,
-        "late_employees": late_employees,
+        "date": timeutils.app_now().strftime("%Y-%m-%d"),
+        "total_records_processed": len(result["logs"]),
+        "logs": result["logs"],
+        "late_employees": result["late_employees"],
     }
 
 

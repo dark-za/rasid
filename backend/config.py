@@ -56,4 +56,8 @@ def settings() -> dict:
         "debounce_minutes": float(_require("DEBOUNCE_MINUTES", "5")),
         "default_shift_start": _require("DEFAULT_SHIFT_START", "08:00"),
         "default_grace_minutes": int(_require("DEFAULT_GRACE_MINUTES", "15")),
+        "timezone": _require("APP_TIMEZONE", "Asia/Riyadh"),
+        # هل AttendanceDateTime وقت محلي مُرمَّز كـ epoch (true) أم UTC حقيقي (false)؟
+        "attendance_epoch_is_local": _require("ATTENDANCE_EPOCH_IS_LOCAL", "true").lower()
+        in {"1", "true", "yes", "on"},
     }
