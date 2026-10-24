@@ -1,25 +1,23 @@
-"""اختبارات مصادقة X-API-Key.
-
-معظم الاختبارات يبني تطبيقاً صغيراً معتمداً على require_api_key نفسه
-حتى لا تعتمد على قاعدة بيانات حقيقية.
-اختبارات الأحرف غير ASCII تُستدعى على مستوى ASGI ببايتات خام (سلوك uvicorn
-الفعلي) لأن طبقة httpx في TestClient ترفض رؤوساً غير ASCII.
-"""
+"""Tests for configured administrator credentials and short-lived bearer tokens."""
 import asyncio
 import json
+import time
 
 from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
+from fastapi.routing import APIRoute
 import pytest
+from fastapi import HTTPException
 
+import auth
 import config
 import main
+import schemas
 
-test_app = FastAPI()
+_test_app = FastAPI()
 
 
-@test_app.get("/protected")
-def protected(_: None = Depends(main.require_api_key)):
+@_test_app.get("/protected")
+def protected(_: str = Depends(auth.require_authenticated_user)):
     return {"ok": True}
 
 
@@ -29,12 +27,14 @@ def _clean_settings_cache():
     config.settings.cache_clear()
 
 
-def _client() -> TestClient:
-    return TestClient(test_app)
+def _set_credentials(monkeypatch, *, username="admin", password="strong-password"):
+    monkeypatch.setenv("RASID_LOGIN_USERNAME", username)
+    monkeypatch.setenv("RASID_LOGIN_PASSWORD", password)
+    monkeypatch.setenv("RASID_SESSION_SECRET", "s" * 40)
+    config.settings.cache_clear()
 
 
 def _raw_get(path: str, headers: list[tuple[bytes, bytes]]) -> tuple[int, dict | None]:
-    """استدعاء ASGI ببايتات خام — نفس مسار uvicorn الحقيقي للرؤوس."""
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -56,61 +56,129 @@ def _raw_get(path: str, headers: list[tuple[bytes, bytes]]) -> tuple[int, dict |
     async def send(message):
         sent.append(message)
 
-    asyncio.run(test_app(scope, receive, send))
+    asyncio.run(_test_app(scope, receive, send))
     status = sent[0]["status"]
     body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
     return status, (json.loads(body) if body else None)
 
 
-def _set_key(monkeypatch, value=None):
-    if value is None:
-        monkeypatch.delenv("RASID_API_KEY", raising=False)
-    else:
-        monkeypatch.setenv("RASID_API_KEY", value)
-    config.settings.cache_clear()
+def test_login_issues_token_for_configured_credentials(monkeypatch):
+    _set_credentials(monkeypatch)
+
+    response = main.login(schemas.LoginIn(username="admin", password="strong-password"))
+
+    assert response["token_type"] == "bearer"
+    assert response["expires_in"] == auth.TOKEN_TTL_SECONDS
+    assert auth.verify_access_token(response["access_token"]) == "admin"
 
 
-def test_missing_key_returns_401(monkeypatch):
-    _set_key(monkeypatch, "rasid-secret-123")
-    response = _client().get("/protected")
-    assert response.status_code == 401
+def test_wrong_login_credentials_are_rejected(monkeypatch):
+    _set_credentials(monkeypatch)
+
+    with pytest.raises(HTTPException) as exc:
+        main.login(schemas.LoginIn(username="admin", password="wrong-password"))
+
+    assert exc.value.status_code == 401
 
 
-def test_wrong_ascii_key_returns_401(monkeypatch):
-    _set_key(monkeypatch, "rasid-secret-123")
-    response = _client().get("/protected", headers={"X-API-Key": "wrong-key"})
-    assert response.status_code == 401
+def test_protected_endpoint_requires_bearer_token(monkeypatch):
+    _set_credentials(monkeypatch)
+    token = auth.issue_access_token("admin", "strong-password")
 
+    status, body = _raw_get(
+        "/protected", [(b"authorization", f"Bearer {token}".encode("ascii"))]
+    )
 
-def test_non_ascii_wrong_key_returns_401_not_500(monkeypatch):
-    """انكسار سابق: hmac.compare_digest مع نص غير ASCII كان يرمي TypeError -> 500."""
-    _set_key(monkeypatch, "rasid-secret-123")
-    status, _ = _raw_get("/protected", [(b"x-api-key", "مفتاح_خاطئ".encode("utf-8"))])
-    assert status == 401
-
-
-def test_correct_ascii_key_returns_200(monkeypatch):
-    _set_key(monkeypatch, "rasid-secret-123")
-    response = _client().get("/protected", headers={"X-API-Key": "rasid-secret-123"})
-    assert response.status_code == 200
-
-
-def test_correct_non_ascii_key_returns_200(monkeypatch):
-    """مفتاح مُهيّأ بأحرف عربية والمُرسل يرسل بايتات UTF-8 نفسها — يجب المصادقة."""
-    _set_key(monkeypatch, "سر-راصد-2026")
-    status, body = _raw_get("/protected", [(b"x-api-key", "سر-راصد-2026".encode("utf-8"))])
     assert status == 200
     assert body == {"ok": True}
 
 
-def test_non_ascii_key_mismatch_returns_401(monkeypatch):
-    """مفتاحان غير ASCII مختلفان: 401 بلا استثناءات."""
-    _set_key(monkeypatch, "سر-راصد-2026")
-    status, _ = _raw_get("/protected", [(b"x-api-key", "مفتاح-آخر".encode("utf-8"))])
-    assert status == 401
+def test_missing_and_tampered_tokens_are_rejected(monkeypatch):
+    _set_credentials(monkeypatch)
+    token = auth.issue_access_token("admin", "strong-password")
+
+    missing_status, _ = _raw_get("/protected", [])
+    tampered_status, _ = _raw_get(
+        "/protected", [(b"authorization", f"Bearer {token}x".encode("ascii"))]
+    )
+
+    assert missing_status == 401
+    assert tampered_status == 401
 
 
-def test_unconfigured_api_returns_503(monkeypatch):
-    _set_key(monkeypatch, None)
-    response = _client().get("/protected", headers={"X-API-Key": "anything"})
-    assert response.status_code == 503
+def test_expired_token_is_rejected(monkeypatch):
+    _set_credentials(monkeypatch)
+    token = auth.issue_access_token("admin", "strong-password")
+    current_time = time.time()
+    monkeypatch.setattr(auth.time, "time", lambda: current_time + auth.TOKEN_TTL_SECONDS + 1)
+
+    assert auth.verify_access_token(token) is None
+
+
+def test_authentication_requires_configured_credentials_and_secret(monkeypatch):
+    monkeypatch.delenv("RASID_LOGIN_USERNAME", raising=False)
+    monkeypatch.delenv("RASID_LOGIN_PASSWORD", raising=False)
+    monkeypatch.delenv("RASID_SESSION_SECRET", raising=False)
+    config.settings.cache_clear()
+
+    with pytest.raises(HTTPException) as exc:
+        main.login(schemas.LoginIn(username="admin", password="password"))
+
+    assert exc.value.status_code == 503
+
+
+def test_public_reads_and_admin_only_writes():
+    routes = {
+        (route.path, method): route
+        for route in main.app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods
+    }
+    public_reads = [
+        ("/api/attendance/today", "GET"),
+        ("/api/attendance", "GET"),
+        ("/api/reports/late", "GET"),
+        ("/api/shifts", "GET"),
+        ("/api/employees", "GET"),
+        ("/api/employee-shifts", "GET"),
+        ("/api/employee-branches", "GET"),
+    ]
+    admin_writes = [
+        ("/api/admin/database", "PUT"),
+        ("/api/admin/database/test", "POST"),
+        ("/api/shifts", "POST"),
+        ("/api/shifts/{shift_id}", "PUT"),
+        ("/api/shifts/{shift_id}", "DELETE"),
+        ("/api/employees", "POST"),
+        ("/api/employees/sync", "POST"),
+        ("/api/employees/{employee_id}", "PUT"),
+        ("/api/employees/{employee_id}", "DELETE"),
+        ("/api/employees/{employee_id}/deactivate", "POST"),
+        ("/api/employees/{employee_id}/activate", "POST"),
+        ("/api/employee-shifts", "POST"),
+        ("/api/employee-shifts/{assignment_id}", "DELETE"),
+        ("/api/employee-branches", "POST"),
+        ("/api/employee-branches/{history_id}", "DELETE"),
+    ]
+
+    for route_key in public_reads:
+        route = routes[route_key]
+        assert all(
+            dependency.call is not main.require_authenticated_user
+            for dependency in route.dependant.dependencies
+        )
+
+    admin_reads = [("/api/admin/database", "GET")]
+    for route_key in admin_reads:
+        route = routes[route_key]
+        assert any(
+            dependency.call is main.require_authenticated_user
+            for dependency in route.dependant.dependencies
+        )
+
+    for route_key in admin_writes:
+        route = routes[route_key]
+        assert any(
+            dependency.call is main.require_authenticated_user
+            for dependency in route.dependant.dependencies
+        )

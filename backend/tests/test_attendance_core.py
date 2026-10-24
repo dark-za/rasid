@@ -1,6 +1,8 @@
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import attendance_core
 import timeutils
 
@@ -82,6 +84,18 @@ def test_on_time_employee_not_reported_late():
     assert _process(rows)["late_employees"] == []
 
 
+@pytest.mark.parametrize(
+    ("grace", "expected_late_minutes"),
+    [(0, 10), (15, 0)],
+)
+def test_lateness_respects_the_selected_shift_grace_mode(grace, expected_late_minutes):
+    rows = _rows((datetime(2026, 10, 24, 8, 10), "16", "سالم"))
+    late = _process(rows, grace=grace)["late_employees"]
+    assert [employee["late_minutes"] for employee in late] == (
+        [expected_late_minutes] if expected_late_minutes else []
+    )
+
+
 def test_lateness_uses_first_punch_only():
     rows = _rows(
         (datetime(2026, 10, 24, 7, 55), "16", "سالم"),   # الحضور الأول في الوقت
@@ -133,3 +147,28 @@ def test_logs_keep_name_device_state_and_order():
     assert logs[1]["state"] == 11
     assert logs[1]["device"] == "جهاز-2"
     assert logs[1]["employee_name"] == "عبدالرحمن"
+
+
+def test_employee_summary_aggregates_first_last_and_count():
+    rows = _rows(
+        (datetime(2026, 10, 24, 7, 50), '16', 'سالم'),
+        (datetime(2026, 10, 24, 12, 30), '16', 'سالم'),
+        (datetime(2026, 10, 24, 17, 5), '16', 'سالم'),
+        (datetime(2026, 10, 24, 8, 25), '71', 'عبدالرحمن'),
+    )
+    result = _process(rows, grace=15)
+    summary = {item['employee_id']: item for item in result['employee_summary']}
+
+    assert '16' in summary
+    assert summary['16']['first_punch'] == '2026-10-24 07:50:00'
+    assert summary['16']['last_punch'] == '2026-10-24 17:05:00'
+    assert summary['16']['punch_count'] == 3
+    assert summary['16']['is_late'] is False
+    assert summary['16']['late_minutes'] == 0
+
+    assert '71' in summary
+    assert summary['71']['first_punch'] == '2026-10-24 08:25:00'
+    assert summary['71']['last_punch'] == '2026-10-24 08:25:00'
+    assert summary['71']['punch_count'] == 1
+    assert summary['71']['is_late'] is True
+    assert summary['71']['late_minutes'] == 10

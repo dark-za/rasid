@@ -6,9 +6,12 @@
   * false: القيمة epoch UTC حقيقي يُحوَّل إلى توقيت التطبيق.
 """
 from datetime import date, datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import config
+
+LatenessMode = Literal["after_grace", "from_start"]
 
 
 def app_tz(name: str | None = None) -> ZoneInfo:
@@ -16,7 +19,7 @@ def app_tz(name: str | None = None) -> ZoneInfo:
     tz_name = name or config.settings()["timezone"]
     try:
         return ZoneInfo(tz_name)
-    except Exception as exc:
+    except (ZoneInfoNotFoundError, ValueError) as exc:
         raise config.ConfigError(f"قيمة APP_TIMEZONE غير صالحة: {tz_name!r}") from exc
 
 
@@ -58,13 +61,60 @@ def day_bounds_epoch_ms(day: date, local_mode: bool | None = None) -> tuple[int,
     return local_to_epoch_ms(start, local_mode), local_to_epoch_ms(end, local_mode)
 
 
-def late_minutes(punch_local: datetime, shift_start: time, grace_minutes: int) -> int:
-    """دقائق التأخير عن (بداية الشيفت + فترة السماح)، و0 يعني عدم التأخير.
+def attendance_day_bounds_epoch_ms(
+    day: date,
+    shift_start: time,
+    shift_end: time,
+    local_mode: bool | None = None,
+) -> tuple[int, int]:
+    """حدود قراءة يوم الحضور، مع تضمين ذيل الشيفت الليلي في صباح اليوم التالي.
+
+    النهاية حصرية. عند عبور الشيفت منتصف الليل، تتوقف القراءة عند وقت انتهائه
+    في اليوم التالي، حتى تُنسب بصمات ذلك الجزء إلى يوم بداية الشيفت.
+    """
+    _validate_shift(shift_start, shift_end)
+    start = datetime.combine(day, time.min, tzinfo=app_tz())
+    end_day = day + timedelta(days=1)
+    end_time = time.min
+    if shift_end < shift_start:
+        end_time = shift_end
+    end = datetime.combine(end_day, end_time, tzinfo=app_tz())
+    return local_to_epoch_ms(start, local_mode), local_to_epoch_ms(end, local_mode)
+
+
+def _validate_shift(shift_start: time, shift_end: time) -> None:
+    if not isinstance(shift_start, time) or not isinstance(shift_end, time):
+        raise TypeError("shift_start and shift_end must be datetime.time values")
+    if shift_start == shift_end:
+        raise ValueError("shift_end must differ from shift_start")
+
+
+def late_minutes(
+    punch_local: datetime,
+    shift_start: time,
+    grace_minutes: int,
+    *,
+    lateness_mode: LatenessMode = "after_grace",
+    shift_date: date | None = None,
+) -> int:
+    """دقائق التأخير، إما بعد السماح أو من بداية الشيفت.
 
     البصمة قبل بداية الشيفت في نفس اليوم (كما بعد منتصف الليل) لا تُعدّ تأخيراً.
     """
-    limit = datetime.combine(punch_local.date(), shift_start, tzinfo=punch_local.tzinfo)
-    limit += timedelta(minutes=grace_minutes)
+    if lateness_mode not in ("after_grace", "from_start"):
+        raise ValueError(f"unsupported lateness_mode: {lateness_mode!r}")
+    if not isinstance(grace_minutes, int) or isinstance(grace_minutes, bool):
+        raise TypeError("grace_minutes must be an integer")
+    if grace_minutes < 0:
+        raise ValueError("grace_minutes must be non-negative")
+    if not isinstance(shift_start, time):
+        raise TypeError("shift_start must be a datetime.time value")
+
+    limit = datetime.combine(
+        shift_date or punch_local.date(), shift_start, tzinfo=punch_local.tzinfo
+    )
+    if lateness_mode == "after_grace":
+        limit += timedelta(minutes=grace_minutes)
     if punch_local <= limit:
         return 0
     return int((punch_local - limit).total_seconds() // 60)

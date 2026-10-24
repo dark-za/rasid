@@ -2,3 +2,12 @@
 venv/
 __pycache__/
 *.py[cod]
+data/
+backups/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+tests/
+.pytest_cache/
+.pytest_temp*
+.pytest_tmp/

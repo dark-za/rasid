@@ -2,39 +2,66 @@ services:
   backend:
     build: ./backend
     container_name: rasid-backend
-    restart: always
+    restart: unless-stopped
     # بلا منافذ على المضيف — يُستدعى من خلال nginx في حاوية الواجهة فقط
+    volumes:
+      - rasid-data:/var/lib/rasid
     environment:
-      # DB_HOST في .env مخصّص للتشغيل المحلي (127.0.0.1) — الحاويات تستخدم
-      # DB_HOST_DOCKER المستقل حتى لا يرث المضيف قيمة127.0.0.1 الخاصة به
-      DB_HOST: ${DB_HOST_DOCKER:-host.docker.internal}
+      RASID_DB_RUNTIME_FILE: /var/lib/rasid/db.env
+      RASID_DB_FILE: /var/lib/rasid/rasid.sqlite3
+      # اتصال القراءة فقط بمصدر البصمات الخارجي
+      DB_HOST: ${DB_HOST:-192.168.8.3}
       DB_PORT: ${DB_PORT:-3306}
-      APP_DB_USER: ${APP_DB_USER:-rasid_app}
       ATTENDANCE_DB_USER: ${ATTENDANCE_DB_USER:-rasid_reader}
-      APP_DB_NAME: ${APP_DB_NAME:-rasid_db}
       ATTENDANCE_DB_NAME: ${ATTENDANCE_DB_NAME:-smartpss_local}
-      # كلمتا السر مشفّرتان (Fernet) + المفتاح — شغّل docs/mysql-setup.sql أولاً
-      DB_PASS_ENC: ${DB_PASS_ENC:-}
-      ATTENDANCE_PASS_ENC: ${ATTENDANCE_PASS_ENC:-}
-      RASID_SECRETS_KEY: ${RASID_SECRETS_KEY:-}
-      # بدائل صريحة للتطوير المحلي فقط:
-      DB_PASS: ${DB_PASS:-}
       ATTENDANCE_PASS: ${ATTENDANCE_PASS:-}
-      RASID_API_KEY: ${RASID_API_KEY:?Set RASID_API_KEY in the environment or .env file}
+      RASID_LOGIN_USERNAME: ${RASID_LOGIN_USERNAME:-admin}
+      RASID_LOGIN_PASSWORD: ${RASID_LOGIN_PASSWORD:?Set RASID_LOGIN_PASSWORD in the environment or .env file}
+      RASID_SESSION_SECRET: ${RASID_SESSION_SECRET:?Set RASID_SESSION_SECRET in the environment or .env file}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Riyadh}
       ATTENDANCE_EPOCH_IS_LOCAL: ${ATTENDANCE_EPOCH_IS_LOCAL:-true}
       DEBOUNCE_MINUTES: ${DEBOUNCE_MINUTES:-5}
       DEFAULT_SHIFT_START: ${DEFAULT_SHIFT_START:-08:00}
       DEFAULT_GRACE_MINUTES: ${DEFAULT_GRACE_MINUTES:-15}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3).close()"
+      interval: 15s
+      timeout: 4s
+      retries: 4
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
   frontend:
     build: ./frontend
     container_name: rasid-frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "3005:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  rasid-data:

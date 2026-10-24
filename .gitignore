@@ -1,10 +1,15 @@
 .env
+.db-runtime.env
 backend/.env
+backend/data/
+backend/backups/
 backend/venv/
 frontend/node_modules/
 frontend/dist/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_temp*/
+.pytest_tmp*/
 .idea/
 .vscode/

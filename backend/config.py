@@ -1,19 +1,19 @@
-"""إعدادات المشروع: تحميل متغيّرات البيئة وفك تشفير الأسرار.
-
-تسلسل أولوية كلمة سر قاعدة البيانات:
-  1. DB_PASS_ENC  -> نص مُشفَّر (Fernet) يُفكّ بـ RASID_SECRETS_KEY  (موصى به)
-  2. DB_PASS      -> نص صريح (للتطوير المحلي فقط)
-"""
+"""إعدادات المشروع والاتصال بمصدر البصمات الخارجي."""
 import os
+import shutil
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from security import decrypt
+from dotenv import load_dotenv, set_key
 
 # ملف الإعدادات الموحد في جذر المشروع (بغض النظر عن دليل التشغيل)
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(ENV_FILE)
+DB_RUNTIME_FILE = Path(
+    os.getenv("RASID_DB_RUNTIME_FILE", str(ENV_FILE.parent / ".db-runtime.env"))
+)
+load_dotenv(DB_RUNTIME_FILE, override=True)
 
 
 class ConfigError(RuntimeError):
@@ -21,32 +21,8 @@ class ConfigError(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def db_password_app() -> str:
-    """كلمة سر مستخدم تطبيق راصد (كتابة جداول النظام)."""
-    encrypted = os.getenv("DB_PASS_ENC", "").strip()
-    if encrypted:
-        key = os.getenv("RASID_SECRETS_KEY", "").strip()
-        if not key:
-            raise ConfigError(
-                "DB_PASS_ENC موجود لكن RASID_SECRETS_KEY غير مضبوط — "
-                "لا يمكن فك تشفير كلمة سر قاعدة البيانات"
-            )
-        return decrypt(encrypted, key)
-    return os.getenv("DB_PASS", "")
-
-
-@lru_cache(maxsize=1)
 def db_password_attendance() -> str:
-    """كلمة سر مستخدم قراءة البصمة (SELECT فقط)."""
-    encrypted = os.getenv("ATTENDANCE_PASS_ENC", "").strip()
-    if encrypted:
-        key = os.getenv("RASID_SECRETS_KEY", "").strip()
-        if not key:
-            raise ConfigError(
-                "ATTENDANCE_PASS_ENC موجود لكن RASID_SECRETS_KEY غير مضبوط — "
-                "لا يمكن فك تشفير كلمة سر قاعدة البصمة"
-            )
-        return decrypt(encrypted, key)
+    """كلمة مرور مستخدم القراءة من قاعدة البصمة الخارجية."""
     return os.getenv("ATTENDANCE_PASS", "")
 
 
@@ -55,16 +31,40 @@ def _require(name: str, default: str = "") -> str:
     return value
 
 
+def update_env_file(values: dict[str, str]) -> None:
+    """Persist settings atomically while preserving unrelated environment entries."""
+    DB_RUNTIME_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=".rasid-db-", suffix=".tmp", dir=DB_RUNTIME_FILE.parent, delete=False
+    ) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        if DB_RUNTIME_FILE.exists():
+            shutil.copyfile(DB_RUNTIME_FILE, temporary_path)
+        for key, value in values.items():
+            result = set_key(str(temporary_path), key, value, quote_mode="always")
+            if not result[0]:
+                raise OSError(f"Unable to persist environment setting {key}")
+        os.replace(temporary_path, DB_RUNTIME_FILE)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
 @lru_cache(maxsize=1)
 def settings() -> dict:
     return {
-        "db_host": _require("DB_HOST", "127.0.0.1"),
+        "db_file": _require(
+            "RASID_DB_FILE",
+            str(Path(__file__).resolve().parent / "data" / "rasid.sqlite3"),
+        ),
+        "db_host": _require("DB_HOST", "192.168.8.3"),
         "db_port": int(_require("DB_PORT", "3306")),
-        "db_user_app": _require("APP_DB_USER", "rasid_app"),
         "db_user_attendance": _require("ATTENDANCE_DB_USER", "rasid_reader"),
-        "db_name_app": _require("APP_DB_NAME", "rasid_db"),
         "db_name_attendance": _require("ATTENDANCE_DB_NAME", "smartpss_local"),
-        "api_key": _require("RASID_API_KEY", ""),
+        "login_username": _require("RASID_LOGIN_USERNAME", "admin"),
+        "login_password": os.getenv("RASID_LOGIN_PASSWORD", ""),
+        "session_secret": os.getenv("RASID_SESSION_SECRET", ""),
         "cors_origins": [
             o.strip()
             for o in _require(
