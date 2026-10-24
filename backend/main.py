@@ -38,7 +38,12 @@ def require_api_key(x_api_key: str = Header(default="")):
     if not expected_key:
         raise HTTPException(status_code=503, detail="واجهة API غير مهيأة بمفتاح وصول")
 
-    if not hmac.compare_digest(x_api_key, expected_key):
+    # مقارنة البايتات الخام: رؤوس ASGI تصل كنص مفكوك بـ latin-1 والمفتاح
+    # مُخزَّن كنص UTF-8 — strncmp بالنص يرمي TypeError (500) مع أحرف غير ASCII
+    if not hmac.compare_digest(
+        x_api_key.encode("latin-1", errors="replace"),
+        expected_key.encode("utf-8"),
+    ):
         raise HTTPException(status_code=401, detail="مفتاح الوصول غير صحيح")
 
 
