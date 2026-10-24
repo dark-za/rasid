@@ -6,12 +6,14 @@
 """
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from security import decrypt
 
-load_dotenv()
+# ملف الإعدادات الموحد في جذر المشروع (بغض النظر عن دليل التشغيل)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 class ConfigError(RuntimeError):

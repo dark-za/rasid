@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build: ./backend
@@ -19,5 +17,10 @@ services:
       DB_PASS: ${DB_PASS:-}
       RASID_API_KEY: ${RASID_API_KEY:?Set RASID_API_KEY in the environment or .env file}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Riyadh}
+      ATTENDANCE_EPOCH_IS_LOCAL: ${ATTENDANCE_EPOCH_IS_LOCAL:-true}
+      DEBOUNCE_MINUTES: ${DEBOUNCE_MINUTES:-5}
+      DEFAULT_SHIFT_START: ${DEFAULT_SHIFT_START:-08:00}
+      DEFAULT_GRACE_MINUTES: ${DEFAULT_GRACE_MINUTES:-15}
     extra_hosts:
       - "host.docker.internal:host-gateway"

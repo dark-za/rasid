@@ -4,6 +4,8 @@
   * قاعدة "راصد" (APP_DB_NAME)  -> جداول النظام (shifts, employee_branch_history) — كتابة.
   * قاعدة البصمة (ATTENDANCE_DB_NAME) -> جدول AttendanceRecordInfo — قراءة فقط.
 """
+from functools import lru_cache
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.declarative import declarative_base
@@ -26,11 +28,19 @@ def _url(database: str | None = None) -> URL:
     )
 
 
-app_engine = create_engine(_url(config.settings()["db_name_app"]), pool_pre_ping=True)
-attendance_engine = create_engine(_url(config.settings()["db_name_attendance"]), pool_pre_ping=True)
+# المحركات تُنشأ عند أول استخدام (lazy) — لا اتصال أو قراءة إعدادات عند الاستيراد
+@lru_cache(maxsize=1)
+def _app_engine():
+    return create_engine(_url(config.settings()["db_name_app"]), pool_pre_ping=True)
 
-AppSession = sessionmaker(autocommit=False, autoflush=False, bind=app_engine)
-AttendanceSession = sessionmaker(autocommit=False, autoflush=False, bind=attendance_engine)
+
+@lru_cache(maxsize=1)
+def _attendance_engine():
+    return create_engine(_url(config.settings()["db_name_attendance"]), pool_pre_ping=True)
+
+
+AppSession = sessionmaker(autocommit=False, autoflush=False)
+AttendanceSession = sessionmaker(autocommit=False, autoflush=False)
 
 
 def ensure_app_database() -> None:
@@ -47,11 +57,11 @@ def ensure_app_database() -> None:
 
 def init_db() -> None:
     ensure_app_database()
-    Base.metadata.create_all(bind=app_engine)
+    Base.metadata.create_all(bind=_app_engine())
 
 
 def get_db():
-    db = AppSession()
+    db = AppSession(bind=_app_engine())
     try:
         yield db
     finally:
@@ -59,7 +69,7 @@ def get_db():
 
 
 def get_attendance_db():
-    db = AttendanceSession()
+    db = AttendanceSession(bind=_attendance_engine())
     try:
         yield db
     finally:

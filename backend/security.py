@@ -1,20 +1,21 @@
 """تشفير وفك تشفير الأسرار باستخدام Fernet (مفتاح تشفير متماثل).
 
 الاستخدام:
-    python -m security genkey                       # توليد مفتاح تشفير جديد
-    python -m security encrypt "النص_ال sensitif"    # تشفير نص (يتطلب المفتاح)
-    python -m security decrypt "gAAAAA..."           # فك تشفير
+    python -m security genkey                 # توليد مفتاح تشفير جديد
+    python -m security encrypt "كلمة-السر"    # تشفير نص (يتطلب المفتاح)
+    python -m security decrypt "gAAAAA..."    # فك تشفير
 
 المفتاح يُمرَّر عبر متغيّر البيئة RASID_SECRETS_KEY أو عبر --key.
 """
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def _resolve_key(cli_key: str | None = None) -> bytes:
