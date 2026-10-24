@@ -11,7 +11,8 @@ export default function App() {
   const [branchName, setBranchName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [notes, setNotes] = useState('');
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('rasid-api-key') || '');
+  // المفتاح يُحفظ في sessionStorage (جلسة المتصفح فقط) — لا يبقى بعد إغلاق التبويب
+  const [apiKey, setApiKey] = useState(() => sessionStorage.getItem('rasid-api-key') || '');
   const [apiError, setApiError] = useState('');
 
   const apiFetch = (path, options = {}) => fetch(path, {
@@ -79,7 +80,8 @@ export default function App() {
     <div style={{ fontFamily: 'Tahoma, sans-serif', direction: 'rtl', padding: '20px', backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
       <section style={{ background: '#fff', padding: '12px 16px', borderRadius: '8px', marginBottom: '16px' }}>
         <label htmlFor="api-key">مفتاح الوصول: </label>
-        <input id="api-key" type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem('rasid-api-key', e.target.value); }} autoComplete="current-password" />
+        <input id="api-key" type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); sessionStorage.setItem('rasid-api-key', e.target.value); }} autoComplete="off" />
+        <small style={{ color: '#7f8c8d', marginRight: '8px' }}>(يُحفظ في جلسة المتصفح فقط)</small>
         <button type="button" onClick={fetchData} style={{ marginRight: '8px' }}>اتصال</button>
         {apiError && <p role="alert" style={{ color: '#c0392b' }}>{apiError}</p>}
       </section>
