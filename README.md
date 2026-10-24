@@ -53,10 +53,13 @@ npm run dev        # http://localhost:3005
 ## التشغيل بـ Docker
 
 ```bash
-docker compose up --build -d      # الباكند على المنفذ 8000
+docker compose up --build -d      # الواجهة+الباكند
+# الواجهة:  http://localhost:3005  (nginx يقدّم dist ويرسل /api إلى الباكند داخلياً)
 ```
 
-`docker compose` يقرأ `.env` من الجذر تلقائياً لاستبدال المتغيّرات.
+- `docker compose` يقرأ `.env` من الجذر تلقائياً لاستبدال المتغيّرات.
+- الباكند **بلا منفذ على المضيف** في وضع compose — حسابات MySQL يجب أن تقبل من شبكة compose (`'rasid_app'@'%'` كما في `docs/mysql-setup.sql`) أو من نطاق الشبكة المحلية.
+- للإنتاج ضع أمام المنفذ 3005 طبقة TLS: خدمة proxy خارجية (nginx بشهادة، Caddy، Traefik) أو Cloudflare/Tunnel — لا تُعرض الواجهة على HTTP عاري عبر الإنترنت، لأن مفتاح API يدخل من المتصفح.
 
 ## واجهة API
 

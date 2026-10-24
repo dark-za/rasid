@@ -3,10 +3,11 @@ services:
     build: ./backend
     container_name: rasid-backend
     restart: always
-    ports:
-      - "8000:8000"
+    # بلا منافذ على المضيف — يُستدعى من خلال nginx في حاوية الواجهة فقط
     environment:
-      DB_HOST: ${DB_HOST:-host.docker.internal}
+      # DB_HOST في .env مخصّص للتشغيل المحلي (127.0.0.1) — الحاويات تستخدم
+      # DB_HOST_DOCKER المستقل حتى لا يرث المضيف قيمة127.0.0.1 الخاصة به
+      DB_HOST: ${DB_HOST_DOCKER:-host.docker.internal}
       DB_PORT: ${DB_PORT:-3306}
       APP_DB_USER: ${APP_DB_USER:-rasid_app}
       ATTENDANCE_DB_USER: ${ATTENDANCE_DB_USER:-rasid_reader}
@@ -28,3 +29,12 @@ services:
       DEFAULT_GRACE_MINUTES: ${DEFAULT_GRACE_MINUTES:-15}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  frontend:
+    build: ./frontend
+    container_name: rasid-frontend
+    restart: always
+    ports:
+      - "3005:80"
+    depends_on:
+      - backend
