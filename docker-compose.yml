@@ -8,13 +8,17 @@ services:
     environment:
       DB_HOST: ${DB_HOST:-host.docker.internal}
       DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER:-root}
+      APP_DB_USER: ${APP_DB_USER:-rasid_app}
+      ATTENDANCE_DB_USER: ${ATTENDANCE_DB_USER:-rasid_reader}
       APP_DB_NAME: ${APP_DB_NAME:-rasid_db}
       ATTENDANCE_DB_NAME: ${ATTENDANCE_DB_NAME:-smartpss_local}
-      # كلمة السر مشفّرة (Fernet) + المفتاح — أو استخدم DB_PASS الصريح للتطوير فقط
+      # كلمتا السر مشفّرتان (Fernet) + المفتاح — شغّل docs/mysql-setup.sql أولاً
       DB_PASS_ENC: ${DB_PASS_ENC:-}
+      ATTENDANCE_PASS_ENC: ${ATTENDANCE_PASS_ENC:-}
       RASID_SECRETS_KEY: ${RASID_SECRETS_KEY:-}
+      # بدائل صريحة للتطوير المحلي فقط:
       DB_PASS: ${DB_PASS:-}
+      ATTENDANCE_PASS: ${ATTENDANCE_PASS:-}
       RASID_API_KEY: ${RASID_API_KEY:?Set RASID_API_KEY in the environment or .env file}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3005,http://127.0.0.1:3005}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Riyadh}

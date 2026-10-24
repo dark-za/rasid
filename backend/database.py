@@ -16,12 +16,18 @@ import config
 Base = declarative_base()
 
 
-def _url(database: str | None = None) -> URL:
+def _url(database: str | None = None, *, app: bool = True) -> URL:
     s = config.settings()
+    if app:
+        username = s["db_user_app"]
+        password = config.db_password_app()
+    else:
+        username = s["db_user_attendance"]
+        password = config.db_password_attendance()
     return URL.create(
         "mysql+pymysql",
-        username=s["db_user"],
-        password=config.db_password(),
+        username=username,
+        password=password,
         host=s["db_host"],
         port=s["db_port"],
         database=database,
@@ -31,12 +37,12 @@ def _url(database: str | None = None) -> URL:
 # المحركات تُنشأ عند أول استخدام (lazy) — لا اتصال أو قراءة إعدادات عند الاستيراد
 @lru_cache(maxsize=1)
 def _app_engine():
-    return create_engine(_url(config.settings()["db_name_app"]), pool_pre_ping=True)
+    return create_engine(_url(config.settings()["db_name_app"], app=True), pool_pre_ping=True)
 
 
 @lru_cache(maxsize=1)
 def _attendance_engine():
-    return create_engine(_url(config.settings()["db_name_attendance"]), pool_pre_ping=True)
+    return create_engine(_url(config.settings()["db_name_attendance"], app=False), pool_pre_ping=True)
 
 
 AppSession = sessionmaker(autocommit=False, autoflush=False)
@@ -44,14 +50,26 @@ AttendanceSession = sessionmaker(autocommit=False, autoflush=False)
 
 
 def ensure_app_database() -> None:
-    """إنشاء قاعدة بيانات راصد إن لم تكن موجودة (لا نلمس قاعدة البصمة)."""
+    """إنشاء قاعدة بيانات راصد إن لم تكن موجودة (لا نلمس قاعدة البصمة).
+
+    يُستخدم حساب تطبيق راصد: الفحص أولاً عبر INFORMATION_SCHEMA حتى لا
+    نطلب صلاحية CREATE DATABASE في كل إقلاع عندما تكون القاعدة موجودة.
+    """
     app_db_name = config.settings()["db_name_app"]
-    server_engine = create_engine(_url(None), pool_pre_ping=True)
+    server_engine = create_engine(_url(None, app=True), pool_pre_ping=True)
     with server_engine.begin() as conn:
-        conn.execute(
-            text(f"CREATE DATABASE IF NOT EXISTS `{app_db_name}` "
-                 "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-        )
+        exists = conn.execute(
+            text(
+                "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
+                "WHERE SCHEMA_NAME = :name"
+            ),
+            {"name": app_db_name},
+        ).first()
+        if exists is None:
+            conn.execute(
+                text(f"CREATE DATABASE IF NOT EXISTS `{app_db_name}` "
+                     "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+            )
     server_engine.dispose()
 
 

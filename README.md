@@ -20,6 +20,9 @@
 ## الإعداد الأول
 
 ```bash
+# 0) أنشئ مستخدمي القواعد بصلاحيات محدودة (يفعل مرة واحدة بحساب root على الخادم)
+mysql -u root -p < docs/mysql-setup.sql
+
 # 1) انسخ ملف الإعدادات في الجذر واملأ القيم
 cp .env.example .env
 
@@ -27,9 +30,10 @@ cp .env.example .env
 python -m security genkey          # أو: cd backend && python -m security genkey
 python -c "import secrets;print(secrets.token_urlsafe(32))"   # مفتاح RASID_API_KEY
 
-# 3) عبّئ RASID_SECRETS_KEY في .env ثم شفّر كلمة سر قاعدة البيانات
-RASID_SECRETS_KEY=<المفتاح> python -m security encrypt 'كلمة-سر-MySQL'
-# الناتج (DB_PASS_ENC) يوضع في .env — لا تضع كلمة السر الصريحة في الإنتاج
+# 3) عبّئ RASID_SECRETS_KEY في .env ثم شفّر كلمتي سر المستخدمين
+RASID_SECRETS_KEY=<المفتاح> python -m security encrypt 'سر-rasid_app'          # DB_PASS_ENC
+RASID_SECRETS_KEY=<المفتاح> python -m security encrypt 'سر-rasid_reader'       # ATTENDANCE_PASS_ENC
+# الناتج يوضع في .env — لا تضع الأسرار الصريحة في الإنتاج
 ```
 
 ## التشغيل المحلي
@@ -111,7 +115,9 @@ venv/bin/pytest -q
 ## الأمان
 
 - **لا ترفع `.env` إلى Git** — مُضاف إلى `.gitignore`. `.env.example` يحوي قوالب فقط.
-- كلمة سر قاعدة البيانات تُخزَّن مشفّرة (Fernet) في `DB_PASS_ENC`؛ المفتاح `RASID_SECRETS_KEY` يُدار خارج المستودع في الإنتاج.
+- لا يُستخدم حساب `root`: `rasid_app` يملك DML على `rasid_db` فقط، و`rasid_reader` يملك `SELECT` فقط على قاعدة البصمة (اختبرنا رفض الكتابة فعلياً).
+- كلمتا سر المستخدمين مُخزَّنتان مشفّرتين (Fernet): `DB_PASS_ENC` و`ATTENDANCE_PASS_ENC`؛ المفتاح `RASID_SECRETS_KEY` يُدار خارج المستودع في الإنتاج.
+- على MariaDB: حسابات المستخدمين المجهولين (`''@'localhost'`) تمنع اتصال المستخدمين الجدد — نظّفها (مذكور في `docs/mysql-setup.sql`).
 - إن كان مستودعك يحوي إعدادات قديمة في سجل Git (مثل كلمات سر قديمة) — **غيّرها فعلياً** على الخادم؛ حذف الملف من الـ commit الأخير لا يمحوها من السجل.
 - قاعدة البصمة تُقرأ فقط: لا أنشطة كتابة ولا تعديل مخطّط عليها.
 

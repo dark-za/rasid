@@ -21,7 +21,8 @@ class ConfigError(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def db_password() -> str:
+def db_password_app() -> str:
+    """كلمة سر مستخدم تطبيق راصد (كتابة جداول النظام)."""
     encrypted = os.getenv("DB_PASS_ENC", "").strip()
     if encrypted:
         key = os.getenv("RASID_SECRETS_KEY", "").strip()
@@ -34,6 +35,21 @@ def db_password() -> str:
     return os.getenv("DB_PASS", "")
 
 
+@lru_cache(maxsize=1)
+def db_password_attendance() -> str:
+    """كلمة سر مستخدم قراءة البصمة (SELECT فقط)."""
+    encrypted = os.getenv("ATTENDANCE_PASS_ENC", "").strip()
+    if encrypted:
+        key = os.getenv("RASID_SECRETS_KEY", "").strip()
+        if not key:
+            raise ConfigError(
+                "ATTENDANCE_PASS_ENC موجود لكن RASID_SECRETS_KEY غير مضبوط — "
+                "لا يمكن فك تشفير كلمة سر قاعدة البصمة"
+            )
+        return decrypt(encrypted, key)
+    return os.getenv("ATTENDANCE_PASS", "")
+
+
 def _require(name: str, default: str = "") -> str:
     value = os.getenv(name, default).strip()
     return value
@@ -44,7 +60,8 @@ def settings() -> dict:
     return {
         "db_host": _require("DB_HOST", "127.0.0.1"),
         "db_port": int(_require("DB_PORT", "3306")),
-        "db_user": _require("DB_USER", "root"),
+        "db_user_app": _require("APP_DB_USER", "rasid_app"),
+        "db_user_attendance": _require("ATTENDANCE_DB_USER", "rasid_reader"),
         "db_name_app": _require("APP_DB_NAME", "rasid_db"),
         "db_name_attendance": _require("ATTENDANCE_DB_NAME", "smartpss_local"),
         "api_key": _require("RASID_API_KEY", ""),
